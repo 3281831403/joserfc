@@ -49,6 +49,16 @@ __all__ = [
 setup_jwe_algorithms()
 
 
+def _construct_registry(algorithms: Collection[str] | None, registry: JWERegistry | None) -> JWERegistry:
+    if algorithms is not None:
+        # an explicit collection, including an empty one, produces an
+        # independent registry so the shared default is never mutated
+        return JWERegistry(algorithms=algorithms)
+    if registry is None:
+        return default_registry
+    return registry
+
+
 def encrypt_compact(
     protected: Header,
     plaintext: bytes | str,
@@ -75,10 +85,12 @@ def encrypt_compact(
     :return: JWE Compact Serialization in bytes
     """
 
-    if algorithms:
-        registry = JWERegistry(algorithms=algorithms)
-    elif registry is None:
-        registry = default_registry
+    registry = _construct_registry(algorithms, registry)
+
+    # validate the algorithms in the protected header before touching any
+    # key material, so an allow-list violation never leaks key lookup errors
+    # (e.g. probing "kid" values via a KeySet)
+    registry.check_algorithms(protected)
 
     obj = CompactEncryption(protected, to_bytes(plaintext))
     recipient: Recipient[Key] = Recipient(obj)
@@ -120,14 +132,15 @@ def decrypt_compact(
     :param sender_key: only required when using ECDH-1PU
     :return: object of the ``CompactEncryption``
     """
-    if algorithms:
-        registry = JWERegistry(algorithms=algorithms)
-    elif registry is None:
-        registry = default_registry
+    registry = _construct_registry(algorithms, registry)
 
     obj = extract_compact(to_bytes(value), registry)
     recipient = obj.recipient
     assert recipient is not None
+    # validate the algorithms in the protected header before touching any
+    # key material, so an allow-list violation never leaks key lookup errors
+    # (e.g. probing "kid" values via a KeySet)
+    registry.check_algorithms(obj.protected)
     key = guess_key(private_key, recipient, use="enc")
     key.check_use("enc")
     recipient.recipient_key = key
@@ -191,13 +204,14 @@ def encrypt_json(
     :return: JWE JSON Serialization in dict
     """
 
-    if algorithms:
-        registry = JWERegistry(algorithms=algorithms)
-    elif registry is None:
-        registry = default_registry
+    registry = _construct_registry(algorithms, registry)
 
     reject_unprotected_crit_header(obj.unprotected)
     for recipient in obj.recipients:
+        # validate the algorithms in the merged recipient headers before any
+        # key lookup, so an allow-list violation is reported as an algorithm
+        # error instead of leaking key lookup ("kid") errors
+        registry.check_algorithms(recipient.headers())
         if sender_key and not recipient.sender_key:
             recipient.sender_key = _guess_sender_key(recipient, sender_key, True)
         if not recipient.recipient_key:
@@ -229,28 +243,33 @@ def decrypt_json(
     :param sender_key: only required when using ECDH-1PU
     :return: an instance of ``GeneralJSONEncryption`` or ``FlattenedJSONEncryption``
     """
-    if algorithms:
-        registry = JWERegistry(algorithms=algorithms)
-    elif registry is None:
-        registry = default_registry
+    registry = _construct_registry(algorithms, registry)
 
     reject_unprotected_crit_header(data.get("unprotected"))
     if "recipients" in data:
         general_obj = extract_general_json(cast(GeneralJSONSerialization, data), registry)
-        _attach_recipient_keys(general_obj.recipients, private_key, sender_key)
+        _attach_recipient_keys(general_obj.recipients, private_key, sender_key, registry)
         perform_decrypt(general_obj, registry)
         return general_obj
     else:
         flattened_obj = extract_flattened_json(data, registry)
-        _attach_recipient_keys(flattened_obj.recipients, private_key, sender_key)
+        _attach_recipient_keys(flattened_obj.recipients, private_key, sender_key, registry)
         perform_decrypt(flattened_obj, registry)
         return flattened_obj
 
 
 def _attach_recipient_keys(
-    recipients: list[Recipient[Key]], private_key: KeyFlexible, sender_key: ECKey | OKPKey | KeySet | None = None
+    recipients: list[Recipient[Key]],
+    private_key: KeyFlexible,
+    sender_key: ECKey | OKPKey | KeySet | None = None,
+    registry: JWERegistry | None = None,
 ) -> None:
     for recipient in recipients:
+        # validate the algorithms in the merged recipient headers before any
+        # key lookup, so an allow-list violation is reported as an algorithm
+        # error instead of leaking key lookup ("kid") errors
+        if registry is not None:
+            registry.check_algorithms(recipient.headers())
         key = guess_key(private_key, recipient, use="enc")
         key.check_use("enc")
         recipient.recipient_key = key

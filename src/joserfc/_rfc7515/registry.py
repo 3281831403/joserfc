@@ -82,12 +82,13 @@ class JWSRegistry:
         if name not in self.algorithms:
             raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not supported")
 
-        if self.allowed:
+        if self.allowed is not None:
+            # an explicit (even empty) allow-list is authoritative; an empty
+            # list means no algorithm is allowed
             if name not in self.allowed:
                 raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not allowed")
-        else:
-            if name not in self.recommended:
-                raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not recommended")
+        elif name not in self.recommended:
+            raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not recommended")
 
         alg = self.algorithms[name]
         if alg.security_warning:
@@ -180,7 +181,9 @@ default_registry = JWSRegistry()
 
 
 def construct_registry(algorithms: Collection[str] | None = None) -> JWSRegistry:
-    if algorithms:
+    if algorithms is not None:
+        # an explicit collection, including an empty one, produces an
+        # independent registry so the shared default is never mutated
         registry = JWSRegistry(algorithms=algorithms)
     else:
         registry = default_registry

@@ -1,7 +1,8 @@
 import unittest
 
+from joserfc.errors import UnsupportedAlgorithmError
 from joserfc.jwk import ECKey, KeySet, OctKey, OKPKey, RSAKey
-from joserfc.jws import JWSRegistry
+from joserfc.jws import JWSRegistry, construct_registry, default_registry
 
 
 class JWSRegistryTest(unittest.TestCase):
@@ -92,3 +93,26 @@ class JWSRegistryTest(unittest.TestCase):
         # RS512 has the highest algorithm_security (512) among available algorithms
         alg = JWSRegistry.guess_algorithm(key_set, JWSRegistry.Strategy.SECURITY)
         self.assertEqual(alg.name, "RS512")
+
+    def test_empty_allowed_algorithms_rejects_everything(self):
+        """An explicit empty allow-list must deny every algorithm, even recommended ones."""
+        for empty in ([], set(), ()):
+            registry = JWSRegistry(algorithms=empty)
+            for name in ("HS256", "RS256", "ES256", "none"):
+                self.assertRaises(UnsupportedAlgorithmError, registry.get_alg, name)
+
+    def test_none_allowed_uses_recommended(self):
+        """algorithms=None must keep the original recommended-set behavior."""
+        registry = JWSRegistry()
+        self.assertIsNone(registry.allowed)
+        self.assertEqual(registry.get_alg("HS256").name, "HS256")
+
+    def test_construct_registry_with_empty_collection_is_independent(self):
+        """construct_registry with an empty collection must not return the shared default."""
+        self.assertIs(construct_registry(None), default_registry)
+        registry = construct_registry([])
+        self.assertIsNot(registry, default_registry)
+        self.assertEqual(registry.allowed, [])
+        # the shared default registry must not be polluted
+        self.assertIsNone(default_registry.allowed)
+        self.assertEqual(default_registry.get_alg("HS256").name, "HS256")

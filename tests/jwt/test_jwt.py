@@ -121,6 +121,45 @@ class TestJWT(TestCase):
             ("HS384",),
         )
 
+    def test_empty_algorithms_deny_all(self):
+        """An empty algorithm collection must reject JWT decoding."""
+        data = jwt.encode({"alg": "HS256"}, {"sub": "a"}, self.oct_key)
+        for empty in ([], set(), ()):
+            self.assertRaises(
+                UnsupportedAlgorithmError,
+                jwt.decode,
+                data,
+                self.oct_key,
+                algorithms=empty,
+            )
+        # passing an explicit registry with an empty allow-list
+        self.assertRaises(
+            UnsupportedAlgorithmError,
+            jwt.decode,
+            data,
+            self.oct_key,
+            registry=jws.JWSRegistry(algorithms=[]),
+        )
+
+    def test_empty_algorithms_deny_all_jwe(self):
+        """An empty algorithm collection must reject JWE-backed JWT decoding."""
+        key = OctKey.generate_key(128)
+        registry = jwe.JWERegistry(algorithms=["A128KW", "A128CBC-HS256"])
+        data = jwt.encode(
+            {"alg": "A128KW", "enc": "A128CBC-HS256"},
+            {"sub": "a"},
+            key,
+            registry=registry,
+        )
+        self.assertRaises(
+            UnsupportedAlgorithmError,
+            jwt.decode,
+            data,
+            key,
+            algorithms=[],
+            registry=jwe.JWERegistry(),
+        )
+
     def test_with_embedded_jwk(self):
         value = (
             "eyJqd2siOnsiY3J2IjoiUC0yNTYiLCJ4IjoiVU05ZzVuS25aWFlvdldBbE"

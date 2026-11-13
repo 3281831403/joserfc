@@ -110,6 +110,21 @@ class JWERegistry:
         elif self.strict_check_header:
             check_supported_header(self.header_registry, header)
 
+    def check_algorithms(self, header: Header) -> None:
+        """Validate only the allow-list entries of the "alg" and "enc" header
+        parameters.
+
+        Unlike :meth:`check_header`, this performs no structural header
+        validation, so it can run before any key lookup without changing
+        the errors raised for malformed headers. Algorithm names that are not
+        registered for JWE are ignored here; :meth:`check_header` still
+        reports them during the normal validation flow.
+        """
+        if "alg" in header and header["alg"] in self.algorithms["alg"]:
+            self.get_alg(header["alg"])
+        if "enc" in header and header["enc"] in self.algorithms["enc"]:
+            self.get_enc(header["enc"])
+
     def validate_compact_value_size(self, value: bytes) -> None:
         max_length = (
             self.max_protected_header_length
@@ -185,12 +200,13 @@ class JWERegistry:
         if name not in registry:
             raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not supported")
 
-        if self.allowed:
+        if self.allowed is not None:
+            # an explicit (even empty) allow-list is authoritative; an empty
+            # list means no algorithm is allowed
             if name not in self.allowed:
                 raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not allowed")
-        else:
-            if name not in self.recommended:
-                raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not recommended")
+        elif name not in self.recommended:
+            raise UnsupportedAlgorithmError(f"Algorithm of '{name}' is not recommended")
 
 
 default_registry = JWERegistry()

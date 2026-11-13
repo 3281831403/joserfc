@@ -35,6 +35,56 @@ class TestJWSErrors(TestCase):
         registry = jws.JWSRegistry(algorithms=["HS512"])
         self.assertRaises(UnsupportedAlgorithmError, jws.serialize_compact, header, "i", self.key, registry=registry)
 
+    def test_empty_algorithms_deny_all(self):
+        """An empty algorithm collection must reject every entry point."""
+        header = {"alg": "HS256"}
+        text = jws.serialize_compact(header, "i", self.key)
+
+        for empty in ([], set(), ()):
+            self.assertRaises(
+                UnsupportedAlgorithmError,
+                jws.serialize_compact,
+                header,
+                "i",
+                self.key,
+                algorithms=empty,
+            )
+            self.assertRaises(
+                UnsupportedAlgorithmError,
+                jws.deserialize_compact,
+                text,
+                self.key,
+                algorithms=empty,
+            )
+
+        # an explicitly constructed registry with an empty allow-list
+        registry = jws.JWSRegistry(algorithms=[])
+        self.assertRaises(
+            UnsupportedAlgorithmError,
+            jws.deserialize_compact,
+            text,
+            self.key,
+            registry=registry,
+        )
+
+        # JSON serialization, both flattened and general forms
+        flattened = jws.serialize_json({"protected": header}, "i", self.key)
+        self.assertRaises(
+            UnsupportedAlgorithmError,
+            jws.deserialize_json,
+            flattened,
+            self.key,
+            algorithms=[],
+        )
+        general = jws.serialize_json([{"protected": header}], "i", self.key)
+        self.assertRaises(
+            UnsupportedAlgorithmError,
+            jws.deserialize_json,
+            general,
+            self.key,
+            algorithms=[],
+        )
+
     def test_without_key(self):
         self.assertRaises(MissingKeyError, jws.serialize_compact, {"alg": "HS256"}, "i", None)
 
